@@ -1,12 +1,13 @@
 import React, { type FC, useCallback, useEffect, useRef, useState } from 'react';
-import scrollerFactory from 'lib/scroller';
 import globalize from 'lib/globalize';
 import IconButton from '../emby-button/IconButton';
 import './emby-scrollbuttons.scss';
 import { ScrollDirection, scrollerItemSlideIntoView } from './utils';
 
 interface ScrollButtonsProps {
-    scrollerFactoryRef: React.MutableRefObject<scrollerFactory | null>;
+    scrollContainerRef: React.MutableRefObject<HTMLDivElement | null>;
+    scrollSliderRef: React.MutableRefObject<HTMLElement | null>;
+    isHorizontal: boolean;
     scrollState: {
         scrollSize: number;
         scrollPos: number;
@@ -14,24 +15,28 @@ interface ScrollButtonsProps {
     }
 }
 
-const ScrollButtons: FC<ScrollButtonsProps> = ({ scrollerFactoryRef, scrollState }) => {
+const ScrollButtons: FC<ScrollButtonsProps> = ({ scrollContainerRef, scrollSliderRef, isHorizontal, scrollState }) => {
     const [localeScrollPos, setLocaleScrollPos] = useState<number>(0);
     const scrollButtonsRef = useRef<HTMLDivElement>(null);
 
     const onScrollButtonClick = useCallback((direction: ScrollDirection) => {
         scrollerItemSlideIntoView({
             direction,
-            scroller: scrollerFactoryRef.current,
+            scrollContainer: scrollContainerRef.current,
+            scrollSlider: scrollSliderRef.current,
+            isHorizontal,
             scrollState
         });
-    }, [scrollState, scrollerFactoryRef]);
+    }, [isHorizontal, scrollContainerRef, scrollSliderRef, scrollState]);
 
     const triggerScrollLeft = useCallback(() => onScrollButtonClick(ScrollDirection.LEFT), [ onScrollButtonClick ]);
     const triggerScrollRight = useCallback(() => onScrollButtonClick(ScrollDirection.RIGHT), [ onScrollButtonClick ]);
 
     useEffect(() => {
-        const parent = scrollButtonsRef.current?.parentNode as HTMLDivElement;
-        parent.classList.add('emby-scroller-container');
+        const parent = scrollButtonsRef.current?.parentNode as HTMLDivElement | null;
+        if (parent) {
+            parent.classList.add('emby-scroller-container');
+        }
 
         let localeAwarePos = scrollState.scrollPos;
         if (globalize.getIsElementRTL(scrollButtonsRef.current)) {
@@ -63,4 +68,3 @@ const ScrollButtons: FC<ScrollButtonsProps> = ({ scrollerFactoryRef, scrollState
 };
 
 export default ScrollButtons;
-

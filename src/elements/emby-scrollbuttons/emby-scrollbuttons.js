@@ -3,6 +3,7 @@ import 'webcomponents.js/webcomponents-lite';
 import '../emby-button/paper-icon-button-light';
 import globalize from 'lib/globalize';
 import { scrollerItemSlideIntoView } from './utils';
+import ResizeObserver from 'resize-observer-polyfill';
 
 const EmbyScrollButtonsPrototype = Object.create(HTMLDivElement.prototype);
 
@@ -44,8 +45,8 @@ function updateScrollButtons(scrollButtons, scrollSize, scrollPos, scrollWidth) 
         localeAwarePos *= -1;
     }
 
-    // TODO: Check if hack is really needed
-    // hack alert add twenty for rounding errors
+    // TODO: Check if workaround is really needed
+    // Add twenty for rounding errors
     if (scrollWidth <= scrollSize + 20) {
         scrollButtons.scrollButtonsLeft.classList.add('hide');
         scrollButtons.scrollButtonsRight.classList.add('hide');
@@ -132,9 +133,14 @@ function onScrollButtonClick() {
     const direction = this.getAttribute('data-direction');
     const scroller = this.parentNode.nextSibling;
     const scrollPosition = getScrollPosition(scroller);
+    const isHorizontal = scroller.getAttribute('data-horizontal') !== 'false';
+    const slider = scroller.getScrollSlider ? scroller.getScrollSlider() : scroller.querySelector('.scrollSlider');
+
     scrollerItemSlideIntoView({
         direction,
-        scroller,
+        scrollContainer: scroller,
+        scrollSlider: slider,
+        isHorizontal: isHorizontal,
         scrollState: {
             scrollPos: scrollPosition
         }
@@ -162,6 +168,31 @@ EmbyScrollButtonsPrototype.attachedCallback = function () {
         capture: false,
         passive: true
     });
+
+    const ResizeObserverImpl = window.ResizeObserver || ResizeObserver;
+    if (ResizeObserverImpl) {
+        const resizeObserver = new ResizeObserverImpl(() => {
+            scrollHandler();
+        });
+        resizeObserver.observe(scroller);
+
+        const slider = scroller.getScrollSlider ? scroller.getScrollSlider() : scroller.querySelector('.scrollSlider');
+        if (slider) {
+            resizeObserver.observe(slider);
+        }
+
+        this.resizeObserver = resizeObserver;
+    }
+
+    scrollHandler();
+
+    if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => {
+            scrollHandler();
+        });
+    } else {
+        setTimeout(scrollHandler, 0);
+    }
 };
 
 EmbyScrollButtonsPrototype.detachedCallback = function () {
@@ -176,6 +207,12 @@ EmbyScrollButtonsPrototype.detachedCallback = function () {
         });
     }
 
+    const resizeObserver = this.resizeObserver;
+    if (resizeObserver) {
+        resizeObserver.disconnect();
+        this.resizeObserver = null;
+    }
+
     this.scrollHandler = null;
     this.scrollButtonsLeft = null;
     this.scrollButtonsRight = null;
@@ -185,4 +222,3 @@ document.registerElement('emby-scrollbuttons', {
     prototype: EmbyScrollButtonsPrototype,
     extends: 'div'
 });
-
