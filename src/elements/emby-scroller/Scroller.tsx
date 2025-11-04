@@ -2,10 +2,9 @@ import React, { type FC, type PropsWithChildren, useCallback, useEffect, useRef,
 import classNames from 'classnames';
 import useElementSize from 'hooks/useElementSize';
 import layoutManager from '../../components/layoutManager';
-import dom from '../../utils/dom';
-import browser from '../../scripts/browser';
 import focusManager from '../../components/focusManager';
-import ScrollerFactory from 'lib/scroller';
+import scrollHelper from '../../scripts/scrollHelper';
+import ResizeObserver from 'resize-observer-polyfill';
 import ScrollButtons from '../emby-scrollbuttons/ScrollButtons';
 import './emby-scroller.scss';
 
@@ -33,7 +32,7 @@ const Scroller: FC<PropsWithChildren<ScrollerProps>> = ({
     isAllowNativeSmoothScrollEnabled = false,
     children
 }) => {
-    const [scrollRef, size] = useElementSize();
+    const [scrollRef, size] = useElementSize<HTMLDivElement>();
 
     const [showControls, setShowControls] = useState(false);
     const [scrollState, setScrollState] = useState({
@@ -41,29 +40,58 @@ const Scroller: FC<PropsWithChildren<ScrollerProps>> = ({
         scrollPos: 0,
         scrollWidth: 0
     });
-    const scrollerFactoryRef = useRef<ScrollerFactory | null>(null);
+    const scrollSliderRef = useRef<HTMLElement | null>(null);
+
+    const enableScrollButtons = layoutManager.desktop && isHorizontalEnabled && isScrollButtonsEnabled;
+    const shouldHideScrollbar = enableScrollButtons || isHideScrollbarEnabled || !layoutManager.desktop;
+    const smoothScrollEnabled = (isAllowNativeSmoothScrollEnabled && !enableScrollButtons) || (layoutManager.tv && !enableScrollButtons);
+
+    const scrollerClassName = classNames(
+        'emby-scroller',
+        className,
+        {
+            scrollX: isHorizontalEnabled,
+            scrollY: !isHorizontalEnabled,
+            hiddenScrollX: isHorizontalEnabled && shouldHideScrollbar,
+            hiddenScrollY: !isHorizontalEnabled && shouldHideScrollbar,
+            smoothScrollX: isHorizontalEnabled && smoothScrollEnabled,
+            smoothScrollY: !isHorizontalEnabled && smoothScrollEnabled,
+            'hiddenScrollX-forced': isHorizontalEnabled && enableScrollButtons,
+            'hiddenScrollY-forced': !isHorizontalEnabled && enableScrollButtons
+        }
+    );
 
     const getScrollSlider = useCallback(() => {
-        if (scrollerFactoryRef.current) {
-            return scrollerFactoryRef.current.getScrollSlider();
+        if (scrollSliderRef.current) {
+            return scrollSliderRef.current;
         }
-    }, [scrollerFactoryRef]);
+
+        return scrollRef.current ?? undefined;
+    }, [scrollRef]);
 
     const getScrollPosition = useCallback(() => {
-        if (scrollerFactoryRef.current) {
-            return scrollerFactoryRef.current.getScrollPosition();
+        const frame = scrollRef.current;
+        if (!frame) {
+            return 0;
         }
 
-        return 0;
-    }, [scrollerFactoryRef]);
+        return isHorizontalEnabled ? frame.scrollLeft : frame.scrollTop;
+    }, [isHorizontalEnabled, scrollRef]);
 
     const getScrollWidth = useCallback(() => {
-        if (scrollerFactoryRef.current) {
-            return scrollerFactoryRef.current.getScrollSize();
+        const frame = scrollRef.current;
+        if (!frame) {
+            return 0;
         }
 
-        return 0;
-    }, [scrollerFactoryRef]);
+        const slider = scrollSliderRef.current;
+
+        if (isHorizontalEnabled) {
+            return slider ? slider.scrollWidth : frame.scrollWidth;
+        }
+
+        return slider ? slider.scrollHeight : frame.scrollHeight;
+    }, [isHorizontalEnabled, scrollRef]);
 
     const getStyleValue = useCallback((style: CSSStyleDeclaration, name: string) => {
         let value = style.getPropertyValue(name);
@@ -84,160 +112,211 @@ const Scroller: FC<PropsWithChildren<ScrollerProps>> = ({
     }, []);
 
     const getScrollSize = useCallback(() => {
-        const scroller = scrollRef?.current as HTMLDivElement;
-        let scrollSize = scroller.offsetWidth;
-        let style = window.getComputedStyle(scroller, null);
-
-        let paddingLeft = getStyleValue(style, 'padding-left');
-        if (paddingLeft) {
-            scrollSize -= paddingLeft;
+        const scroller = scrollRef?.current;
+        if (!scroller) {
+            return 0;
         }
 
-        let paddingRight = getStyleValue(style, 'padding-right');
-        if (paddingRight) {
-            scrollSize -= paddingRight;
+        let scrollSize = isHorizontalEnabled ? scroller.offsetWidth : scroller.offsetHeight;
+        let style = window.getComputedStyle(scroller, null);
+
+        if (isHorizontalEnabled) {
+            const paddingLeft = getStyleValue(style, 'padding-left');
+            const paddingRight = getStyleValue(style, 'padding-right');
+            scrollSize -= paddingLeft + paddingRight;
+        } else {
+            const paddingTop = getStyleValue(style, 'padding-top');
+            const paddingBottom = getStyleValue(style, 'padding-bottom');
+            scrollSize -= paddingTop + paddingBottom;
         }
 
         const slider = getScrollSlider();
-        style = window.getComputedStyle(slider, null);
+        if (slider) {
+            style = window.getComputedStyle(slider, null);
 
-        paddingLeft = getStyleValue(style, 'padding-left');
-        if (paddingLeft) {
-            scrollSize -= paddingLeft;
-        }
-
-        paddingRight = getStyleValue(style, 'padding-right');
-        if (paddingRight) {
-            scrollSize -= paddingRight;
+            if (isHorizontalEnabled) {
+                const paddingLeft = getStyleValue(style, 'padding-left');
+                const paddingRight = getStyleValue(style, 'padding-right');
+                scrollSize -= paddingLeft + paddingRight;
+            } else {
+                const paddingTop = getStyleValue(style, 'padding-top');
+                const paddingBottom = getStyleValue(style, 'padding-bottom');
+                scrollSize -= paddingTop + paddingBottom;
+            }
         }
 
         return scrollSize;
-    }, [getScrollSlider, getStyleValue, scrollRef]);
+    }, [getScrollSlider, getStyleValue, isHorizontalEnabled, scrollRef]);
 
     const onScroll = useCallback(() => {
-        const scrollSize = getScrollSize();
-        const scrollPos = getScrollPosition();
-        const scrollWidth = getScrollWidth();
+        const scrollSizeValue = getScrollSize();
+        const scrollPosValue = getScrollPosition();
+        const scrollWidthValue = getScrollWidth();
 
         setScrollState({
-            scrollSize: scrollSize,
-            scrollPos: scrollPos,
-            scrollWidth: scrollWidth
+            scrollSize: scrollSizeValue,
+            scrollPos: scrollPosValue,
+            scrollWidth: scrollWidthValue
         });
     }, [getScrollPosition, getScrollSize, getScrollWidth]);
 
-    const initCenterFocus = useCallback((elem: HTMLElement, scrollerInstance: ScrollerFactory) => {
-        dom.addEventListener(elem, 'focus', function (e: FocusEvent) {
-            const focused = focusManager.focusableParent(e.target);
-            if (focused) {
-                scrollerInstance.toCenter(focused, false);
-            }
-        }, {
-            capture: true,
-            passive: true
-        });
-    }, []);
-
-    const addScrollEventListener = useCallback((fn: () => void, options: AddEventListenerOptions | undefined) => {
-        if (scrollerFactoryRef.current) {
-            dom.addEventListener(scrollerFactoryRef.current.getScrollFrame(), scrollerFactoryRef.current.getScrollEventName(), fn, options);
-        }
-    }, [scrollerFactoryRef]);
-
-    const removeScrollEventListener = useCallback((fn: () => void, options: AddEventListenerOptions | undefined) => {
-        if (scrollerFactoryRef.current) {
-            dom.removeEventListener(scrollerFactoryRef.current.getScrollFrame(), scrollerFactoryRef.current.getScrollEventName(), fn, options);
-        }
-    }, [scrollerFactoryRef]);
-
-    useEffect(() => {
+    const scrollToOffset = useCallback((offset: number, immediate: boolean) => {
         const frame = scrollRef.current;
-
         if (!frame) {
-            console.error('Unexpected null reference');
             return;
         }
 
-        const enableScrollButtons = layoutManager.desktop && isHorizontalEnabled && isScrollButtonsEnabled;
-
-        const options = {
-            horizontal: isHorizontalEnabled,
-            mouseDragging: 1,
-            mouseWheel: isMouseWheelEnabled,
-            touchDragging: 1,
-            slidee: scrollRef.current?.querySelector('.scrollSlider'),
-            scrollBy: 200,
-            speed: isHorizontalEnabled ? 270 : 240,
-            elasticBounds: 1,
-            dragHandle: 1,
-            autoImmediate: true,
-            skipSlideToWhenVisible: isSkipFocusWhenVisibleEnabled,
-            dispatchScrollEvent: enableScrollButtons || isScrollEventEnabled,
-            hideScrollbar: enableScrollButtons || isHideScrollbarEnabled,
-            allowNativeSmoothScroll: isAllowNativeSmoothScrollEnabled && !enableScrollButtons,
-            allowNativeScroll: !enableScrollButtons,
-            forceHideScrollbars: enableScrollButtons,
-            // In edge, with the native scroll, the content jumps around when hovering over the buttons
-            requireAnimation: enableScrollButtons && browser.edge
-        };
-
-        // If just inserted it might not have any height yet - yes this is a hack
-        scrollerFactoryRef.current = new ScrollerFactory(frame, options);
-        scrollerFactoryRef.current.init();
-        scrollerFactoryRef.current.reload();
-
-        if (layoutManager.tv && isCenterFocusEnabled) {
-            initCenterFocus(frame, scrollerFactoryRef.current);
-        }
-
-        if (enableScrollButtons) {
-            addScrollEventListener(onScroll, {
-                capture: false,
-                passive: true
+        if (frame.scrollTo) {
+            frame.scrollTo({
+                left: isHorizontalEnabled ? offset : frame.scrollLeft,
+                top: isHorizontalEnabled ? frame.scrollTop : offset,
+                behavior: immediate ? 'auto' : 'smooth'
             });
-            setShowControls(true);
+        } else if (isHorizontalEnabled) {
+            frame.scrollLeft = Math.round(offset);
+        } else {
+            frame.scrollTop = Math.round(offset);
         }
+    }, [isHorizontalEnabled, scrollRef]);
+
+    useEffect(() => {
+        const frame = scrollRef.current;
+        if (!frame) {
+            return;
+        }
+
+        const slider = frame.querySelector('.scrollSlider') as HTMLElement | null;
+        scrollSliderRef.current = slider ?? frame;
+
+        if (slider && isHorizontalEnabled) {
+            slider.style.whiteSpace = 'nowrap';
+        }
+
+        const ResizeObserverImpl = window.ResizeObserver ?? ResizeObserver;
+
+        if (!slider) {
+            return;
+        }
+
+        const resizeObserver = new ResizeObserverImpl(() => {
+            onScroll();
+        });
+
+        resizeObserver.observe(slider);
 
         return () => {
-            if (scrollerFactoryRef.current) {
-                scrollerFactoryRef.current.destroy();
-                scrollerFactoryRef.current = null;
+            resizeObserver.disconnect();
+        };
+    }, [isHorizontalEnabled, onScroll, scrollRef]);
+
+    useEffect(() => {
+        const frame = scrollRef.current;
+        if (!frame || !layoutManager.tv || !isCenterFocusEnabled) {
+            return;
+        }
+
+        const handleFocus = (event: FocusEvent) => {
+            const focused = focusManager.focusableParent(event.target);
+            if (!focused) {
+                return;
             }
 
-            removeScrollEventListener(onScroll, {
-                capture: false,
-                passive: true
-            });
+            const pos = scrollHelper.getPosition(frame, focused, isHorizontalEnabled);
+            if (isSkipFocusWhenVisibleEnabled && pos.isVisible) {
+                return;
+            }
+
+            scrollToOffset(pos.center, false);
+        };
+
+        frame.addEventListener('focusin', handleFocus, {
+            passive: true
+        });
+
+        return () => {
+            frame.removeEventListener('focusin', handleFocus);
         };
     }, [
-        addScrollEventListener,
-        initCenterFocus,
-        isAllowNativeSmoothScrollEnabled,
         isCenterFocusEnabled,
-        isHideScrollbarEnabled,
-        isHorizontalEnabled,
-        isMouseWheelEnabled,
-        isScrollButtonsEnabled,
-        isScrollEventEnabled,
         isSkipFocusWhenVisibleEnabled,
-        onScroll,
-        removeScrollEventListener,
+        isHorizontalEnabled,
+        scrollToOffset,
         scrollRef
     ]);
+
+    useEffect(() => {
+        const frame = scrollRef.current;
+        if (!frame) {
+            return;
+        }
+
+        if (enableScrollButtons || isScrollEventEnabled) {
+            frame.addEventListener('scroll', onScroll, {
+                passive: true
+            });
+        }
+
+        onScroll();
+        setShowControls(enableScrollButtons);
+
+        return () => {
+            if (enableScrollButtons || isScrollEventEnabled) {
+                frame.removeEventListener('scroll', onScroll);
+            }
+        };
+    }, [enableScrollButtons, isScrollEventEnabled, onScroll, scrollRef]);
+
+    useEffect(() => {
+        onScroll();
+    }, [onScroll, size.height, size.width]);
+
+    useEffect(() => {
+        const frame = scrollRef.current;
+        if (!frame || !isHorizontalEnabled || !isMouseWheelEnabled) {
+            return;
+        }
+
+        const handleWheel = (event: WheelEvent) => {
+            if (Math.abs(event.deltaX) >= Math.abs(event.deltaY) || event.deltaY === 0) {
+                return;
+            }
+
+            if (frame.scrollBy) {
+                frame.scrollBy({
+                    left: event.deltaY,
+                    behavior: 'auto'
+                });
+            } else {
+                frame.scrollLeft += event.deltaY;
+            }
+
+            event.preventDefault();
+        };
+
+        frame.addEventListener('wheel', handleWheel, {
+            passive: false
+        });
+
+        return () => {
+            frame.removeEventListener('wheel', handleWheel);
+        };
+    }, [isHorizontalEnabled, isMouseWheelEnabled, scrollRef]);
 
     return (
         <>
             {
                 showControls && scrollState.scrollWidth > scrollState.scrollSize + 20
                     && <ScrollButtons
-                        scrollerFactoryRef={scrollerFactoryRef}
+                        scrollContainerRef={scrollRef}
+                        scrollSliderRef={scrollSliderRef}
+                        isHorizontal={isHorizontalEnabled}
                         scrollState={scrollState}
                     />
             }
 
             <div
                 ref={scrollRef}
-                className={classNames('emby-scroller', className)}
+                className={scrollerClassName}
             >
                 {children}
 
@@ -248,4 +327,3 @@ const Scroller: FC<PropsWithChildren<ScrollerProps>> = ({
 };
 
 export default Scroller;
-
