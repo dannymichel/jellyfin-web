@@ -1,9 +1,9 @@
 import 'webcomponents.js/webcomponents-lite';
 import dom from '../../utils/dom';
-import ScrollerFactory from 'lib/scroller';
 import browser from '../../scripts/browser';
 import focusManager from '../../components/focusManager';
 import layoutManager from '../../components/layoutManager';
+import scrollHelper from '../../scripts/scrollHelper';
 import './emby-tabs.scss';
 import '../../styles/scrollstyles.scss';
 
@@ -38,6 +38,24 @@ function fadeInRight(elem) {
         iterations: 1,
         easing: 'ease-out'
     });
+}
+
+function centerTabButton(tabs, tabButton, immediate) {
+    if (!tabButton) {
+        return;
+    }
+
+    const pos = scrollHelper.getPosition(tabs, tabButton, true);
+    const behavior = immediate ? 'auto' : 'smooth';
+
+    if (tabs.scrollTo) {
+        tabs.scrollTo({
+            left: pos.center,
+            behavior: behavior
+        });
+    } else {
+        tabs.scrollLeft = Math.round(pos.center);
+    }
 }
 
 function triggerBeforeTabChange(tabs, index, previousIndex) {
@@ -94,17 +112,15 @@ function onClick(e) {
             }));
         }, 120);
 
-        if (tabs.scroller) {
-            tabs.scroller.toCenter(tabButton, false);
-        }
+        centerTabButton(tabs, tabButton, false);
     }
 }
 
 function onFocusIn(e) {
     const tabs = this;
     const tabButton = dom.parentWithClass(e.target, buttonClass);
-    if (tabButton && tabs.scroller) {
-        tabs.scroller.toCenter(tabButton, false);
+    if (tabButton) {
+        centerTabButton(tabs, tabButton, false);
     }
 }
 
@@ -118,38 +134,14 @@ function onFocusOut(e) {
 }
 
 function initScroller(tabs) {
-    if (tabs.scroller) {
+    if (tabs._scrollInitialized) {
         return;
     }
 
-    const contentScrollSlider = tabs.querySelector('.emby-tabs-slider');
-    if (contentScrollSlider) {
-        tabs.scroller = new ScrollerFactory(tabs, {
-            horizontal: 1,
-            itemNav: 0,
-            mouseDragging: 1,
-            touchDragging: 1,
-            slidee: contentScrollSlider,
-            smart: true,
-            releaseSwing: true,
-            scrollBy: 200,
-            speed: 120,
-            elasticBounds: 1,
-            dragHandle: 1,
-            dynamicHandle: 1,
-            clickBar: 1,
-            hiddenScroll: true,
-
-            // In safari the transform is causing the headers to occasionally disappear or flicker
-            requireAnimation: !browser.safari,
-            allowNativeSmoothScroll: true
-        });
-        tabs.scroller.init();
-    } else {
-        tabs.classList.add('scrollX');
-        tabs.classList.add('hiddenScrollX');
-        tabs.classList.add('smoothScrollX');
-    }
+    tabs.classList.add('scrollX');
+    tabs.classList.add('hiddenScrollX');
+    tabs.classList.add('smoothScrollX');
+    tabs._scrollInitialized = true;
 }
 
 EmbyTabs.createdCallback = function () {
@@ -184,8 +176,9 @@ EmbyTabs.focus = function () {
 };
 
 EmbyTabs.refresh = function () {
-    if (this.scroller) {
-        this.scroller.reload();
+    const active = this.querySelector('.' + activeButtonClass);
+    if (active) {
+        centerTabButton(this, active, true);
     }
 };
 
@@ -204,6 +197,7 @@ EmbyTabs.attachedCallback = function () {
 
         if (newTabButton) {
             setActiveTabButton(newTabButton);
+            centerTabButton(this, newTabButton, true);
         }
     }
 
@@ -214,11 +208,6 @@ EmbyTabs.attachedCallback = function () {
 };
 
 EmbyTabs.detachedCallback = function () {
-    if (this.scroller) {
-        this.scroller.destroy();
-        this.scroller = null;
-    }
-
     dom.removeEventListener(this, 'click', onClick, {
         passive: true
     });
@@ -226,6 +215,8 @@ EmbyTabs.detachedCallback = function () {
     if (layoutManager.tv) {
         dom.removeEventListener(this, 'focusin', onFocusIn, { passive: true });
     }
+
+    this._scrollInitialized = false;
 };
 
 function getSelectedTabButton(elem) {
@@ -335,4 +326,3 @@ document.registerElement('emby-tabs', {
     prototype: EmbyTabs,
     extends: 'div'
 });
-

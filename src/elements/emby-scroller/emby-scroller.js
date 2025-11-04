@@ -1,9 +1,8 @@
-import ScrollerFactory from 'lib/scroller';
 import dom from '../../utils/dom';
 import layoutManager from '../../components/layoutManager';
 import inputManager from '../../scripts/inputManager';
 import focusManager from '../../components/focusManager';
-import browser from '../../scripts/browser';
+import scrollHelper from '../../scripts/scrollHelper';
 import 'webcomponents.js/webcomponents-lite';
 import './emby-scroller.scss';
 
@@ -13,77 +12,79 @@ ScrollerPrototype.createdCallback = function () {
     this.classList.add('emby-scroller');
 };
 
-function initCenterFocus(elem, scrollerInstance) {
-    dom.addEventListener(elem, 'focus', function (e) {
+function isHorizontal(scroller) {
+    return scroller.getAttribute('data-horizontal') !== 'false';
+}
+
+function shouldSkipWhenVisible(scroller) {
+    return scroller.getAttribute('data-skipfocuswhenvisible') === 'true';
+}
+
+function getSlider(scroller) {
+    return scroller.querySelector('.scrollSlider');
+}
+
+function scrollToOffset(scroller, offset, horizontal, immediate) {
+    if (scroller.scrollTo) {
+        scroller.scrollTo({
+            left: horizontal ? offset : scroller.scrollLeft,
+            top: horizontal ? scroller.scrollTop : offset,
+            behavior: immediate ? 'auto' : 'smooth'
+        });
+    } else if (horizontal) {
+        scroller.scrollLeft = Math.round(offset);
+    } else {
+        scroller.scrollTop = Math.round(offset);
+    }
+}
+
+function moveTo(scroller, elem, position, immediate) {
+    if (!elem) {
+        return;
+    }
+
+    const horizontal = isHorizontal(scroller);
+    const skipWhenVisible = shouldSkipWhenVisible(scroller);
+    const pos = scrollHelper.getPosition(scroller, elem, horizontal);
+
+    if (skipWhenVisible && pos.isVisible) {
+        return;
+    }
+
+    scrollToOffset(scroller, pos[position], horizontal, immediate === true);
+}
+
+function attachCenterFocus(scroller) {
+    const handler = function (e) {
         const focused = focusManager.focusableParent(e.target);
-        if (focused) {
-            scrollerInstance.toCenter(focused);
+        if (!focused) {
+            return;
         }
-    }, {
+
+        moveTo(scroller, focused, 'center', false);
+    };
+
+    dom.addEventListener(scroller, 'focus', handler, {
         capture: true,
         passive: true
     });
+
+    scroller._focusHandler = handler;
 }
 
-ScrollerPrototype.scrollToBeginning = function () {
-    if (this.scroller) {
-        this.scroller.slideTo(0, true);
+function detachCenterFocus(scroller) {
+    const handler = scroller._focusHandler;
+    if (!handler) {
+        return;
     }
-};
 
-ScrollerPrototype.toStart = function (elem, immediate) {
-    if (this.scroller) {
-        this.scroller.toStart(elem, immediate);
-    }
-};
+    dom.removeEventListener(scroller, 'focus', handler, {
+        capture: true,
+        passive: true
+    });
 
-ScrollerPrototype.toCenter = function (elem, immediate) {
-    if (this.scroller) {
-        this.scroller.toCenter(elem, immediate);
-    }
-};
-
-ScrollerPrototype.scrollToPosition = function (pos, immediate) {
-    if (this.scroller) {
-        this.scroller.slideTo(pos, immediate);
-    }
-};
-
-ScrollerPrototype.getScrollPosition = function () {
-    if (this.scroller) {
-        return this.scroller.getScrollPosition();
-    }
-};
-
-ScrollerPrototype.getScrollSize = function () {
-    if (this.scroller) {
-        return this.scroller.getScrollSize();
-    }
-};
-
-ScrollerPrototype.getScrollEventName = function () {
-    if (this.scroller) {
-        return this.scroller.getScrollEventName();
-    }
-};
-
-ScrollerPrototype.getScrollSlider = function () {
-    if (this.scroller) {
-        return this.scroller.getScrollSlider();
-    }
-};
-
-ScrollerPrototype.addScrollEventListener = function (fn, options) {
-    if (this.scroller) {
-        dom.addEventListener(this.scroller.getScrollFrame(), this.scroller.getScrollEventName(), fn, options);
-    }
-};
-
-ScrollerPrototype.removeScrollEventListener = function (fn, options) {
-    if (this.scroller) {
-        dom.removeEventListener(this.scroller.getScrollFrame(), this.scroller.getScrollEventName(), fn, options);
-    }
-};
+    scroller._focusHandler = null;
+}
 
 function onInputCommand(e) {
     const cmd = e.detail.command;
@@ -102,50 +103,112 @@ function onInputCommand(e) {
     }
 }
 
+ScrollerPrototype.scrollToBeginning = function () {
+    scrollToOffset(this, 0, isHorizontal(this), true);
+};
+
+ScrollerPrototype.toStart = function (elem, immediate) {
+    moveTo(this, elem, 'start', immediate);
+};
+
+ScrollerPrototype.toCenter = function (elem, immediate) {
+    moveTo(this, elem, 'center', immediate);
+};
+
+ScrollerPrototype.scrollToPosition = function (pos, immediate) {
+    scrollToOffset(this, pos, isHorizontal(this), immediate);
+};
+
+ScrollerPrototype.getScrollPosition = function () {
+    return isHorizontal(this) ? this.scrollLeft : this.scrollTop;
+};
+
+ScrollerPrototype.getScrollSize = function () {
+    const horizontal = isHorizontal(this);
+    const slider = getSlider(this);
+
+    if (horizontal) {
+        return slider ? slider.scrollWidth : this.scrollWidth;
+    }
+
+    return slider ? slider.scrollHeight : this.scrollHeight;
+};
+
+ScrollerPrototype.getScrollEventName = function () {
+    return 'scroll';
+};
+
+ScrollerPrototype.getScrollSlider = function () {
+    return getSlider(this) || this;
+};
+
+ScrollerPrototype.addScrollEventListener = function (fn, options) {
+    dom.addEventListener(this, 'scroll', fn, options);
+};
+
+ScrollerPrototype.removeScrollEventListener = function (fn, options) {
+    dom.removeEventListener(this, 'scroll', fn, options);
+};
+
 ScrollerPrototype.attachedCallback = function () {
     if (this.getAttribute('data-navcommands')) {
         inputManager.on(this, onInputCommand);
     }
 
-    const horizontal = this.getAttribute('data-horizontal') !== 'false';
+    const horizontal = isHorizontal(this);
+    const slider = getSlider(this);
 
-    const slider = this.querySelector('.scrollSlider');
-
-    if (horizontal) {
-        slider.style['white-space'] = 'nowrap';
+    if (horizontal && slider) {
+        slider.style.whiteSpace = 'nowrap';
     }
 
-    const scrollFrame = this;
     const enableScrollButtons = layoutManager.desktop && horizontal && this.getAttribute('data-scrollbuttons') !== 'false';
+    const hideScrollbar = enableScrollButtons || this.getAttribute('data-hidescrollbar') === 'true';
+    const allowSmooth = (this.getAttribute('data-allownativesmoothscroll') === 'true' && !enableScrollButtons) || (layoutManager.tv && !enableScrollButtons);
 
-    const options = {
-        horizontal: horizontal,
-        mouseDragging: 1,
-        mouseWheel: this.getAttribute('data-mousewheel') !== 'false',
-        touchDragging: 1,
-        slidee: slider,
-        scrollBy: 200,
-        speed: horizontal ? 270 : 240,
-        elasticBounds: 1,
-        dragHandle: 1,
-        autoImmediate: true,
-        skipSlideToWhenVisible: this.getAttribute('data-skipfocuswhenvisible') === 'true',
-        dispatchScrollEvent: enableScrollButtons || this.getAttribute('data-scrollevent') === 'true',
-        hideScrollbar: enableScrollButtons || this.getAttribute('data-hidescrollbar') === 'true',
-        allowNativeSmoothScroll: this.getAttribute('data-allownativesmoothscroll') === 'true' && !enableScrollButtons,
-        allowNativeScroll: !enableScrollButtons,
-        forceHideScrollbars: enableScrollButtons,
-        // In edge, with the native scroll, the content jumps around when hovering over the buttons
-        requireAnimation: enableScrollButtons && browser.edge
-    };
+    this.classList.toggle('scrollX', horizontal);
+    this.classList.toggle('scrollY', !horizontal);
 
-    // If just inserted it might not have any height yet - yes this is a hack
-    this.scroller = new ScrollerFactory(scrollFrame, options);
-    this.scroller.init();
-    this.scroller.reload();
+    if (horizontal) {
+        if (!layoutManager.desktop || hideScrollbar) {
+            this.classList.add('hiddenScrollX');
+            if (allowSmooth) {
+                this.classList.add('smoothScrollX');
+            } else {
+                this.classList.remove('smoothScrollX');
+            }
+        } else {
+            this.classList.remove('hiddenScrollX');
+            this.classList.remove('smoothScrollX');
+        }
+
+        if (enableScrollButtons) {
+            this.classList.add('hiddenScrollX-forced');
+        } else {
+            this.classList.remove('hiddenScrollX-forced');
+        }
+    } else {
+        if (!layoutManager.desktop || hideScrollbar) {
+            this.classList.add('hiddenScrollY');
+            if (allowSmooth) {
+                this.classList.add('smoothScrollY');
+            } else {
+                this.classList.remove('smoothScrollY');
+            }
+        } else {
+            this.classList.remove('hiddenScrollY');
+            this.classList.remove('smoothScrollY');
+        }
+
+        if (enableScrollButtons) {
+            this.classList.add('hiddenScrollY-forced');
+        } else {
+            this.classList.remove('hiddenScrollY-forced');
+        }
+    }
 
     if (layoutManager.tv && this.getAttribute('data-centerfocus')) {
-        initCenterFocus(this, this.scroller);
+        attachCenterFocus(this);
     }
 
     if (enableScrollButtons) {
@@ -178,16 +241,12 @@ ScrollerPrototype.detachedCallback = function () {
         inputManager.off(this, onInputCommand);
     }
 
+    detachCenterFocus(this);
+
     const headroom = this.headroom;
     if (headroom) {
         headroom.destroy();
         this.headroom = null;
-    }
-
-    const scrollerInstance = this.scroller;
-    if (scrollerInstance) {
-        scrollerInstance.destroy();
-        this.scroller = null;
     }
 };
 
@@ -195,4 +254,3 @@ document.registerElement('emby-scroller', {
     prototype: ScrollerPrototype,
     extends: 'div'
 });
-

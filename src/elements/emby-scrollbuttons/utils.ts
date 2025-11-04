@@ -1,4 +1,3 @@
-import ScrollerFactory from 'lib/scroller';
 import globalize from 'lib/globalize';
 
 export enum ScrollDirection {
@@ -12,27 +11,33 @@ interface ScrollState {
 
 interface ScrollerItemSlideIntoViewProps {
     direction: ScrollDirection;
-    scroller: ScrollerFactory | null;
+    scrollContainer: HTMLElement | null;
+    scrollSlider: HTMLElement | null;
+    isHorizontal: boolean;
     scrollState: ScrollState;
 }
 
 interface ScrollToWindowProps {
-    scroller: ScrollerFactory;
+    scrollContainer: HTMLElement;
     items: HTMLElement[];
     scrollState: ScrollState;
     direction: ScrollDirection
 }
 
-export function scrollerItemSlideIntoView({ direction, scroller, scrollState }: ScrollerItemSlideIntoViewProps) {
-    if (!scroller) {
+export function scrollerItemSlideIntoView({ direction, scrollContainer, scrollSlider, isHorizontal, scrollState }: ScrollerItemSlideIntoViewProps) {
+    if (!scrollContainer || !isHorizontal) {
         return;
     }
 
-    const slider: HTMLElement = scroller.getScrollSlider();
-    const items = [...slider.children] as HTMLElement[];
+    const slider = scrollSlider ?? scrollContainer;
+    const items = [...slider.children].filter((child): child is HTMLElement => child instanceof HTMLElement);
+
+    if (!items.length) {
+        return;
+    }
 
     scrollToWindow({
-        scroller,
+        scrollContainer,
         items,
         scrollState,
         direction
@@ -57,7 +62,7 @@ function getFirstAndLastVisible(scrollFrame: HTMLElement, items: HTMLElement[], 
 }
 
 function scrollToWindow({
-    scroller,
+    scrollContainer,
     items,
     scrollState,
     direction = ScrollDirection.RIGHT
@@ -67,10 +72,7 @@ function scrollToWindow({
     const isRTL = globalize.getIsRTL();
     const localeModifier = isRTL ? -1 : 1;
 
-    // NOTE: The legacy scroller is passing in an Element which is the frame element and has some of the scroller
-    // factory functions on it, but is not a true scroller factory. For legacy, we need to pass `scroller` directly
-    // instead of getting the frame from the factory instance.
-    const frame = scroller.getScrollFrame?.() ?? scroller;
+    const frame = scrollContainer;
     const [firstVisibleIndex, lastVisibleIndex] = getFirstAndLastVisible(frame, items, scrollState);
 
     let scrollToPosition: number;
@@ -94,10 +96,12 @@ function scrollToWindow({
         scrollToPosition = (previousItemScrollOffset - offsetAdjustment) * localeModifier;
     }
 
-    if (scroller.slideTo) {
-        scroller.slideTo(scrollToPosition, false, undefined);
+    if (frame.scrollTo) {
+        frame.scrollTo({
+            left: scrollToPosition,
+            behavior: 'smooth'
+        });
     } else {
-        // @ts-expect-error Legacy support passes in a `scroller` that isn't a ScrollFactory
-        scroller.scrollToPosition(scrollToPosition);
+        frame.scrollLeft = scrollToPosition;
     }
 }
