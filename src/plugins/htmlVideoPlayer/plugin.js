@@ -293,6 +293,18 @@ export class HtmlVideoPlayer {
      * @type {number | null | undefined}
      */
     #currentTime;
+    /**
+     * @type {ResizeObserver | null | undefined}
+     */
+    #subtitleBaseSizeObserver;
+    /**
+     * @type {(() => void) | null | undefined}
+     */
+    #subtitleBaseSizeResizeHandler;
+    /**
+     * @type {number | null | undefined}
+     */
+    #subtitleBaseSizeBaseline;
 
     /**
      * @private (used in other files)
@@ -852,6 +864,7 @@ export class HtmlVideoPlayer {
 
         destroyHlsPlayer(this);
         destroyFlvPlayer(this);
+        this.teardownSubtitleBaseSize();
 
         setBackdropTransparency(TRANSPARENCY_LEVEL.None);
         document.body.classList.remove('hide-scroll');
@@ -889,6 +902,82 @@ export class HtmlVideoPlayer {
         } else if (document.webkitIsFullScreen && document.webkitCancelFullscreen) {
             // iOS Safari
             document.webkitCancelFullscreen();
+        }
+    }
+
+    /**
+     * @private
+     */
+    teardownSubtitleBaseSize() {
+        if (this.#subtitleBaseSizeObserver) {
+            this.#subtitleBaseSizeObserver.disconnect();
+            this.#subtitleBaseSizeObserver = null;
+        }
+
+        if (this.#subtitleBaseSizeResizeHandler) {
+            window.removeEventListener('resize', this.#subtitleBaseSizeResizeHandler);
+            this.#subtitleBaseSizeResizeHandler = null;
+        }
+
+        this.#subtitleBaseSizeBaseline = null;
+    }
+
+    /**
+     * @private
+     */
+    setupSubtitleBaseSize(container) {
+        if (!container) {
+            return;
+        }
+
+        this.teardownSubtitleBaseSize();
+
+        // Reference values: at 800px height, subtitle base should be 27px (original 170% of 16px)
+        // This height represents a typical browser window, making subtitles match the original
+        // fixed size (170% = 27.2px) at common viewing scenarios, while still scaling responsively
+        const REFERENCE_HEIGHT = 800;
+        const REFERENCE_BASE_SIZE = 27;
+
+        const updateBaseSize = () => {
+            if (!container.isConnected) {
+                return;
+            }
+
+            const rect = container.getBoundingClientRect();
+            const currentHeight = rect.height;
+
+            // Skip calculation if container has no meaningful dimensions yet
+            // This prevents incorrect tiny font on initial render before layout completes
+            if (currentHeight < 100) {
+                console.log('[Subtitle Scaling] Skipping - container height too small:', currentHeight);
+                return;
+            }
+
+            // Scale proportionally based on current height vs reference height
+            const scaledSize = REFERENCE_BASE_SIZE * (currentHeight / REFERENCE_HEIGHT);
+
+            // Clamp to reasonable bounds (min 12px, max 60px)
+            const clampedSize = Math.max(12, Math.min(scaledSize, 60));
+
+            console.log('[Subtitle Scaling] height:', currentHeight, 'scaled:', scaledSize, 'clamped:', clampedSize);
+            container.style.setProperty('--subtitle-base-size', `${clampedSize}px`);
+        };
+
+        // Defer initial calculation to ensure container is fully laid out
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                updateBaseSize();
+            });
+        });
+
+        if (typeof ResizeObserver !== 'undefined') {
+            this.#subtitleBaseSizeObserver = new ResizeObserver(() => {
+                updateBaseSize();
+            });
+            this.#subtitleBaseSizeObserver.observe(container);
+        } else {
+            this.#subtitleBaseSizeResizeHandler = () => updateBaseSize();
+            window.addEventListener('resize', this.#subtitleBaseSizeResizeHandler);
         }
     }
 
@@ -996,6 +1085,19 @@ export class HtmlVideoPlayer {
             elem.removeAttribute('controls');
 
             loading.hide();
+
+            // Recalculate subtitle size now that container is fully expanded
+            if (this.#videoDialog) {
+                const rect = this.#videoDialog.getBoundingClientRect();
+                if (rect.height > 100) {
+                    const REFERENCE_HEIGHT = 800;
+                    const REFERENCE_BASE_SIZE = 27;
+                    const scaledSize = REFERENCE_BASE_SIZE * (rect.height / REFERENCE_HEIGHT);
+                    const clampedSize = Math.max(12, Math.min(scaledSize, 60));
+                    console.log('[Subtitle Scaling] onPlaying recalc - height:', rect.height, 'scaled:', scaledSize, 'clamped:', clampedSize);
+                    this.#videoDialog.style.setProperty('--subtitle-base-size', `${clampedSize}px`);
+                }
+            }
 
             seekOnPlaybackStart(this, e.target, this._currentPlayOptions.playerStartPositionTicks, () => {
                 if (this.#currentAssRenderer) {
@@ -1657,6 +1759,7 @@ export class HtmlVideoPlayer {
                 document.body.insertBefore(playerDlg, document.body.firstChild);
                 this.#videoDialog = playerDlg;
                 this.#mediaElement = videoElement;
+                this.setupSubtitleBaseSize(playerDlg);
 
                 delete this.forcedFullscreen;
 
@@ -1700,6 +1803,7 @@ export class HtmlVideoPlayer {
                 // update backdrop image
                 videoElement.poster = options.backdropUrl;
             }
+            this.setupSubtitleBaseSize(dlg);
 
             return Promise.resolve(videoElement);
         }
