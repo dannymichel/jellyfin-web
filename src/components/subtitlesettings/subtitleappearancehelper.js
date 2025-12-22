@@ -8,23 +8,23 @@ function getTextStyles(settings, preview) {
 
     switch (settings.textSize || '') {
         case 'smaller':
-            list.push({ name: 'font-size', value: '.8em' });
+            list.push({ name: 'font-size', value: 'calc(var(--subtitle-base-size) * 0.8)' });
             break;
         case 'small':
-            list.push({ name: 'font-size', value: 'inherit' });
+            list.push({ name: 'font-size', value: 'var(--subtitle-base-size)' });
             break;
         case 'larger':
-            list.push({ name: 'font-size', value: '2em' });
+            list.push({ name: 'font-size', value: 'calc(var(--subtitle-base-size) * 2)' });
             break;
         case 'extralarge':
-            list.push({ name: 'font-size', value: '2.2em' });
+            list.push({ name: 'font-size', value: 'calc(var(--subtitle-base-size) * 2.2)' });
             break;
         case 'large':
-            list.push({ name: 'font-size', value: '1.72em' });
+            list.push({ name: 'font-size', value: 'calc(var(--subtitle-base-size) * 1.72)' });
             break;
         case 'medium':
         default:
-            list.push({ name: 'font-size', value: '1.36em' });
+            list.push({ name: 'font-size', value: 'calc(var(--subtitle-base-size) * 1.36)' });
             break;
     }
 
